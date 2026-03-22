@@ -1,0 +1,7 @@
+{
+  "name": "CEO Cartoonizer",
+  "description": "Transform your selfie into a polished, Pixar-style business illustration.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
