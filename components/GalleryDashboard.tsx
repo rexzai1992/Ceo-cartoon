@@ -138,6 +138,7 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
   const [downloadPreview, setDownloadPreview] = useState<{ url: string; filename: string } | null>(null);
   const [imageLoadingIds, setImageLoadingIds] = useState<Record<string, boolean>>({});
   const [thumbnailFallbackIds, setThumbnailFallbackIds] = useState<Record<string, boolean>>({});
+  const [beforeAfterModeById, setBeforeAfterModeById] = useState<Record<string, 'before' | 'after'>>({});
   const [activePresentedId, setActivePresentedId] = useState<string | null>(null);
   const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presentRequestSeqRef = useRef(0);
@@ -250,6 +251,7 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
   };
 
   useEffect(() => {
+    setBeforeAfterModeById({});
     setThumbnailFallbackIds({});
     setLimit(12);
     const cacheKey = getGalleryCacheKey(selectedOutlet);
@@ -907,22 +909,55 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
                 <div className="aspect-square bg-gray-100 relative group overflow-hidden">
                   {gen.status === 'success' ? (
                     gen.image_url ? (
+                      (() => {
+                        const beforeImageUrl = gen.id === DEMO_GENERATION.id ? null : getBeforeImageForGeneration(gen.id);
+                        const hasBeforeImage = Boolean(beforeImageUrl);
+                        const isBefore = hasBeforeImage && beforeAfterModeById[gen.id] === 'before';
+                        const displayImageSrc = isBefore
+                          ? (beforeImageUrl as string)
+                          : (thumbnailFallbackIds[gen.id] ? gen.image_url : buildGalleryThumbnailUrl(gen.image_url));
+
+                        return (
                       <>
+                        <div className="absolute top-2 left-2 z-20 inline-flex bg-white/90 backdrop-blur-sm rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                          <button
+                            onClick={() => setBeforeAfterModeById((prev) => ({ ...prev, [gen.id]: 'before' }))}
+                            disabled={!hasBeforeImage}
+                            className={`px-2.5 py-1.5 text-xs font-bold transition-colors ${
+                              isBefore
+                                ? 'bg-blue-600 text-white'
+                                : 'text-gray-600 hover:bg-gray-100'
+                            } disabled:opacity-40 disabled:cursor-not-allowed`}
+                          >
+                            Before
+                          </button>
+                          <button
+                            onClick={() => setBeforeAfterModeById((prev) => ({ ...prev, [gen.id]: 'after' }))}
+                            className={`px-2.5 py-1.5 text-xs font-bold transition-colors ${
+                              !isBefore
+                                ? 'bg-blue-600 text-white'
+                                : 'text-gray-600 hover:bg-gray-100'
+                            }`}
+                          >
+                            After
+                          </button>
+                        </div>
                         <img 
-                          src={thumbnailFallbackIds[gen.id] ? gen.image_url : buildGalleryThumbnailUrl(gen.image_url)}
+                          src={displayImageSrc}
                           alt={gen.person_name} 
                           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                           referrerPolicy="no-referrer"
                           loading="lazy"
                           decoding="async"
                           onError={() => {
+                            if (isBefore) return;
                             setThumbnailFallbackIds((prev) => {
                               if (prev[gen.id]) return prev;
                               return { ...prev, [gen.id]: true };
                             });
                           }}
                         />
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
+                        <div className="absolute inset-0 z-10 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
                           <button
                             onClick={() => void handlePresent(gen)}
                             className="bg-white/90 text-gray-900 p-3 rounded-full hover:bg-white hover:scale-110 transition-all shadow-lg"
@@ -940,6 +975,8 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
                           </button>
                         </div>
                       </>
+                        );
+                      })()
                     ) : (
                       <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 bg-gray-50 p-4 text-center">
                         <RefreshCw size={32} className={`mb-2 text-blue-400 ${imageLoadingIds[gen.id] ? 'animate-spin' : ''}`} />
