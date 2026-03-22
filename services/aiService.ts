@@ -10,6 +10,23 @@ Task:
 
 Ensure the final image is cohesive, with consistent lighting and shadows between the realistic character face and the magical Ghibli-style shop background. The final result should look like a high-quality concept art piece where the kid's dream shop has come to life!`;
 
+const FACE_LOCK_INSTRUCTIONS = `
+[FACE IDENTITY LOCK - HIGHEST PRIORITY]
+- Use the selfie as the single source of truth for identity.
+- Keep the same facial structure, eyes, nose, lips, skin tone, hairstyle/hairline, and age appearance.
+- Preserve likeness strongly so the result is immediately recognizable as the same person.
+- Do NOT alter ethnicity, age group, or distinctive facial traits.
+- Do NOT produce a generic anime/cartoon face.
+- You may stylize clothing/body/background, but facial identity must remain faithful to the selfie.
+`;
+
+const ARTWORK_LOCK_INSTRUCTIONS = `
+[ARTWORK BACKGROUND LOCK]
+- Use the kid's artwork as the actual scene foundation/background.
+- Enhance details and polish, but preserve core layout, concept, and major elements from the drawing.
+- Do not replace with an unrelated or generic background.
+`;
+
 // Helper to construct the prompt from template
 const buildPrompt = (request: CartoonRequest, template: string) => {
   let prompt = template || DEFAULT_PROMPT_TEMPLATE;
@@ -131,7 +148,8 @@ const generateWithGemini = async (
   
   // Use custom template or fallback
   const promptTemplate = settings.promptTemplate || DEFAULT_PROMPT_TEMPLATE;
-  const prompt = buildPrompt(request, promptTemplate);
+  let prompt = buildPrompt(request, promptTemplate);
+  prompt += `\n${FACE_LOCK_INSTRUCTIONS}\n${ARTWORK_LOCK_INSTRUCTIONS}`;
 
   try {
     const parts: any[] = [
@@ -212,18 +230,16 @@ const generateWithOpenAI = async (
   const promptTemplate = finalSettings.promptTemplate || DEFAULT_PROMPT_TEMPLATE;
   let prompt = buildPrompt(request, promptTemplate);
 
-  // Enhance prompt with visual description if reference image exists
+  // Always enforce identity preservation when selfie is provided.
   if (referenceImage) {
-    prompt = prompt.replace(
-      /CRITICAL INSTRUCTION FOR THE FACE:.*?realistic portrait/s,
-      `CRITICAL INSTRUCTION FOR THE FACE: The person's face MUST match the reference selfie provided - maintain accurate facial features, skin tone, eye color, and distinctive characteristics. Create a highly accurate, realistic portrait that preserves their exact identity. Do NOT cartoonify the face - integrate it seamlessly into the Ghibli-inspired scene`
-    );
-    prompt += "\n[REFERENCE IMAGE CONTEXT: A selfie/reference photo has been provided to guide the character's facial features and appearance.]";
+    prompt += `\n${FACE_LOCK_INSTRUCTIONS}`;
+    prompt += "\n[REFERENCE IMAGE CONTEXT: The selfie image is provided and must drive facial identity.]";
   }
 
-  // Add artwork context if provided
+  // Always enforce artwork-as-background when artwork image is provided.
   if (artworkImage) {
-    prompt += "\n[ARTWORK REFERENCE: A kid's drawing has been provided and must be used as the background/backdrop. Enhance it based on business type and selected style while preserving the original drawing concept.]";
+    prompt += `\n${ARTWORK_LOCK_INSTRUCTIONS}`;
+    prompt += "\n[ARTWORK REFERENCE CONTEXT: The kid's artwork image is provided as the background source.]";
   }
 
   const model = finalSettings.model || 'gpt-image-1';
