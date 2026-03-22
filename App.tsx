@@ -228,6 +228,76 @@ function App() {
     }
   };
 
+  const buildBeforeComparisonImage = async (selfieUrl: string, artworkUrl: string): Promise<string> => {
+    const loadImage = (src: string): Promise<HTMLImageElement> =>
+      new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = src;
+      });
+
+    try {
+      const [selfieImg, artworkImg] = await Promise.all([loadImage(selfieUrl), loadImage(artworkUrl)]);
+
+      const canvas = document.createElement('canvas');
+      const panelSize = 640;
+      const gap = 20;
+      const pad = 24;
+      const titleH = 72;
+      canvas.width = panelSize * 2 + gap + pad * 2;
+      canvas.height = panelSize + titleH + pad * 2;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return artworkUrl || selfieUrl;
+
+      const drawImageCover = (image: HTMLImageElement, x: number, y: number, size: number) => {
+        const imageRatio = image.width / image.height;
+        let sx = 0;
+        let sy = 0;
+        let sWidth = image.width;
+        let sHeight = image.height;
+
+        if (imageRatio > 1) {
+          sWidth = image.height;
+          sx = (image.width - sWidth) / 2;
+        } else if (imageRatio < 1) {
+          sHeight = image.width;
+          sy = (image.height - sHeight) / 2;
+        }
+
+        ctx.drawImage(image, sx, sy, sWidth, sHeight, x, y, size, size);
+      };
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const selfieX = pad;
+      const artworkX = pad + panelSize + gap;
+      const imageY = pad + titleH;
+
+      // Titles
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#1F2937';
+      ctx.font = '700 32px sans-serif';
+      ctx.fillText('Selfie', selfieX + panelSize / 2, pad + 42);
+      ctx.fillText('Artwork', artworkX + panelSize / 2, pad + 42);
+
+      // Frames
+      ctx.strokeStyle = '#E5E7EB';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(selfieX, imageY, panelSize, panelSize);
+      ctx.strokeRect(artworkX, imageY, panelSize, panelSize);
+
+      drawImageCover(selfieImg, selfieX, imageY, panelSize);
+      drawImageCover(artworkImg, artworkX, imageY, panelSize);
+
+      return canvas.toDataURL('image/jpeg', 0.82);
+    } catch {
+      return artworkUrl || selfieUrl;
+    }
+  };
+
   const handleNext = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setStep(prev => prev + 1);
@@ -245,8 +315,8 @@ function App() {
     if (!image || !artwork) return;
 
     setStatus(AppStatus.GENERATING);
-    const beforeImage = artwork?.previewUrl || image.previewUrl;
-    const optimizedBeforeImage = await optimizeBeforeImageForPresentation(beforeImage);
+    const beforeComparison = await buildBeforeComparisonImage(image.previewUrl, artwork.previewUrl);
+    const optimizedBeforeImage = await optimizeBeforeImageForPresentation(beforeComparison);
     
     let recordId: string | null = null;
     try {
