@@ -20,6 +20,13 @@ const FACE_LOCK_INSTRUCTIONS = `
 - You may stylize clothing/body/background, but facial identity must remain faithful to the selfie.
 `;
 
+const OUTFIT_LOCK_INSTRUCTIONS = `
+[OUTFIT LOCK]
+- Dress the person in formal business attire suitable for a young CEO.
+- Preferred outfit: suit or blazer (smart, professional look).
+- Keep clothing neat, premium, and entrepreneur-like.
+`;
+
 const ARTWORK_LOCK_INSTRUCTIONS = `
 [ARTWORK BACKGROUND LOCK]
 - Use the kid's artwork as the actual scene foundation/background.
@@ -149,7 +156,7 @@ const generateWithGemini = async (
   // Use custom template or fallback
   const promptTemplate = settings.promptTemplate || DEFAULT_PROMPT_TEMPLATE;
   let prompt = buildPrompt(request, promptTemplate);
-  prompt += `\n${FACE_LOCK_INSTRUCTIONS}\n${ARTWORK_LOCK_INSTRUCTIONS}`;
+  prompt += `\n${FACE_LOCK_INSTRUCTIONS}\n${OUTFIT_LOCK_INSTRUCTIONS}\n${ARTWORK_LOCK_INSTRUCTIONS}`;
 
   try {
     const parts: any[] = [
@@ -235,6 +242,7 @@ const generateWithOpenAI = async (
     prompt += `\n${FACE_LOCK_INSTRUCTIONS}`;
     prompt += "\n[REFERENCE IMAGE CONTEXT: The selfie image is provided and must drive facial identity.]";
   }
+  prompt += `\n${OUTFIT_LOCK_INSTRUCTIONS}`;
 
   // Always enforce artwork-as-background when artwork image is provided.
   if (artworkImage) {
