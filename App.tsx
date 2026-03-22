@@ -245,11 +245,13 @@ function App() {
     if (!image || !artwork) return;
 
     setStatus(AppStatus.GENERATING);
+    const beforeImage = artwork?.previewUrl || image.previewUrl;
+    const optimizedBeforeImage = await optimizeBeforeImageForPresentation(beforeImage);
     
     let recordId: string | null = null;
     try {
       // Create pending record in Supabase
-      const data = await saveGeneration(formData, 'pending', 'pending');
+      const data = await saveGeneration(formData, 'pending', 'pending', optimizedBeforeImage);
       if (data && data[0]) {
         recordId = data[0].id;
       }
@@ -258,8 +260,6 @@ function App() {
     }
 
     if (recordId) {
-      const beforeImage = artwork?.previewUrl || image.previewUrl;
-      const optimizedBeforeImage = await optimizeBeforeImageForPresentation(beforeImage);
       saveBeforeImageForGeneration(recordId, optimizedBeforeImage);
     }
 

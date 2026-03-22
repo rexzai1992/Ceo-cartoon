@@ -12,7 +12,8 @@ export const supabase = supabaseUrl && supabaseKey
 export async function saveGeneration(
   request: CartoonRequest,
   imageUrl: string,
-  status: 'success' | 'error' | 'pending' = 'success'
+  status: 'success' | 'error' | 'pending' = 'success',
+  beforeImageUrl?: string
 ) {
   if (!supabase) {
     console.warn('Supabase is not configured. Skipping database save.');
@@ -29,6 +30,7 @@ export async function saveGeneration(
           business_name: request.businessName || 'N/A',
           business_type: request.businessType,
           image_url: imageUrl,
+          before_image_url: beforeImageUrl || null,
           status: status,
           outlet: request.outlet || 'Melaka',
         },

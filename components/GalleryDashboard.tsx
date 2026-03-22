@@ -47,6 +47,13 @@ const clearAllGalleryCaches = () => {
 
 const buildCachePayload = (items: Generation[]): Generation[] => {
   return items
+    .map((item) => {
+      const beforeImageUrl = item.before_image_url || '';
+      if (beforeImageUrl.startsWith('data:image/')) {
+        return { ...item, before_image_url: '' };
+      }
+      return item;
+    })
     .filter((item) => {
       const imageUrl = item.image_url || '';
       return item.id === DEMO_GENERATION.id || !imageUrl.startsWith('data:image/');
@@ -204,7 +211,7 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
     try {
       let query = supabase
         .from('generations')
-        .select('id,created_at,person_name,gender,business_name,business_type,status,outlet')
+        .select('id,created_at,person_name,gender,business_name,business_type,status,outlet,before_image_url')
         .order('created_at', { ascending: false })
         .limit(currentLimit + 1);
 
@@ -219,6 +226,7 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
       const fetchedData = (data || []).map((item: any) => ({
         ...item,
         image_url: '',
+        before_image_url: item.before_image_url || '',
       })) as Generation[];
       const hasNextPage = fetchedData.length > currentLimit;
       const pagedData = hasNextPage ? fetchedData.slice(0, currentLimit) : fetchedData;
@@ -262,6 +270,7 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
         const parsed = (parsedRaw || []).map((item) => ({
           ...item,
           image_url: item.image_url || '',
+          before_image_url: item.before_image_url || '',
         })) as Generation[];
         if (Array.isArray(parsed) && parsed.length > 0) {
           setGenerations(parsed);
@@ -280,14 +289,20 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
     fetchGenerations(false, 12);
   }, [selectedOutlet]);
 
-  const mergeGenerationImages = (rows: Array<{ id: string; image_url: string }>) => {
+  const mergeGenerationImages = (rows: Array<{ id: string; image_url?: string; before_image_url?: string }>) => {
     if (rows.length === 0) return;
-    const byId = new Map(rows.map((row) => [row.id, row.image_url]));
+    const byId = new Map(rows.map((row) => [row.id, row]));
 
     setGenerations((prev) =>
       prev.map((item) => {
-        const imageUrl = byId.get(item.id);
-        return imageUrl ? { ...item, image_url: imageUrl } : item;
+        const row = byId.get(item.id);
+        if (!row) return item;
+
+        return {
+          ...item,
+          image_url: row.image_url || item.image_url,
+          before_image_url: row.before_image_url || item.before_image_url,
+        };
       })
     );
 
@@ -316,14 +331,16 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
       try {
         const { data, error } = await supabase
           .from('generations')
-          .select('id,image_url')
+          .select('id,image_url,before_image_url')
           .in('id', batch);
 
         if (error) throw error;
 
         const rows = (data || []).filter(
-          (row: any) => typeof row.image_url === 'string' && row.image_url.length > 0
-        ) as Array<{ id: string; image_url: string }>;
+          (row: any) =>
+            (typeof row.image_url === 'string' && row.image_url.length > 0) ||
+            (typeof row.before_image_url === 'string' && row.before_image_url.length > 0)
+        ) as Array<{ id: string; image_url?: string; before_image_url?: string }>;
         mergeGenerationImages(rows);
       } catch (err) {
         console.error('Error loading gallery images batch:', err);
@@ -347,14 +364,18 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
     try {
       const { data, error } = await supabase
         .from('generations')
-        .select('id,image_url')
+        .select('id,image_url,before_image_url')
         .eq('id', gen.id)
         .single();
 
       if (error) throw error;
       if (!data?.image_url) return null;
 
-      const hydrated: Generation = { ...gen, image_url: data.image_url };
+      const hydrated: Generation = {
+        ...gen,
+        image_url: data.image_url,
+        before_image_url: data.before_image_url || gen.before_image_url,
+      };
       setGenerations((prev) => prev.map((item) => (item.id === gen.id ? hydrated : item)));
       setImageLoadingIds((prev) => {
         const next = { ...prev };
@@ -910,7 +931,9 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
                   {gen.status === 'success' ? (
                     gen.image_url ? (
                       (() => {
-                        const beforeImageUrl = gen.id === DEMO_GENERATION.id ? null : getBeforeImageForGeneration(gen.id);
+                        const beforeImageUrl =
+                          gen.before_image_url ||
+                          (gen.id === DEMO_GENERATION.id ? null : getBeforeImageForGeneration(gen.id));
                         const hasBeforeImage = Boolean(beforeImageUrl);
                         const isBefore = hasBeforeImage && beforeAfterModeById[gen.id] === 'before';
                         const displayImageSrc = isBefore
