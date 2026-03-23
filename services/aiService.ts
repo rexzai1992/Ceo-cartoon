@@ -1,14 +1,35 @@
 import { GoogleGenAI } from "@google/genai";
 import { CartoonRequest, ImageFile, AppSettings, AspectRatio } from "../types";
 
-export const DEFAULT_PROMPT_TEMPLATE = `You are an expert illustrator. I have provided two images: a "Selfie Image" of a {{gender}} named {{personName}}, and an "Artwork Image" which is a kid's drawing of their dream shop.
+export const DEFAULT_PROMPT_TEMPLATE = `You are an expert AI artist for a kids entrepreneurship photo experience.
 
-Task:
-1. Use the "Artwork Image" (the kid's drawing) as the BACKGROUND/BACKDROP of the final image. Enhance it into a fully realized, highly detailed environment for a {{businessType}} named "{{businessName}}", and make the enhancements match the chosen style "{{style}}". Keep the original imaginative concept, composition, and key visual elements of the kid's drawing alive. Do not replace it with a generic background.
-2. Take the person from the "Selfie Image" ({{personName}}) and place them in this world. CRITICAL INSTRUCTION FOR THE FACE: The person's face MUST NOT be a generic cartoon. It must be a highly accurate, realistic portrait that perfectly preserves their exact facial features, identity, and expression from the selfie. Do not overly cartoonify the face—it must look exactly like the real person, while their clothing and body can match the Ghibli-inspired {{style}} aesthetic.
-3. Place {{personName}} proudly in the FOREGROUND in front of their enhanced shop background ("{{businessName}}"). They are the CEO/owner of this shop.
+You will receive:
+1) A selfie photo of {{personName}} ({{gender}})
+2) An artwork photo (kid's drawing) of their business idea
 
-Ensure the final image is cohesive, with consistent lighting and shadows between the realistic character face and the magical Ghibli-style shop background. The final result should look like a high-quality concept art piece where the kid's dream shop has come to life!`;
+GOAL
+Create one final image where:
+- The person is clearly the same person from the selfie
+- The artwork is enhanced into a polished business scene
+- The result feels premium, slightly cartoon, and believable (not over-cartoon)
+
+CRITICAL RULES
+1. FACE & IDENTITY (HIGHEST PRIORITY)
+- Keep strong likeness to the selfie: same facial structure, eyes, nose, lips, hairstyle/hairline, skin tone, and expression.
+- Mild cartoon style is allowed, but do NOT over-cartoonify or drift into a different face.
+- Keep accessories accurate: if selfie has glasses/mask/hat keep them; if not, do not add them.
+
+2. ARTWORK ENHANCEMENT
+- Use the artwork image as the actual background base.
+- Enhance it according to business type {{businessType}} and style {{style}}.
+- Preserve the original drawing concept and key composition.
+- Improve texture, lighting, depth, and signage clarity without replacing the core drawing.
+
+3. COMPOSITION
+- Place {{personName}} in the foreground as the young business owner of "{{businessName}}".
+- Keep cohesive lighting and shadows between person and enhanced artwork background.
+
+Output a single image.`;
 
 const FACE_LOCK_INSTRUCTIONS = `
 [FACE IDENTITY LOCK - HIGHEST PRIORITY]
@@ -18,6 +39,13 @@ const FACE_LOCK_INSTRUCTIONS = `
 - Do NOT alter ethnicity, age group, or distinctive facial traits.
 - Do NOT produce a generic anime/cartoon face.
 - You may stylize clothing/body/background, but facial identity must remain faithful to the selfie.
+- Keep realistic skin pores/texture and natural face lighting (avoid waxy/plastic skin).
+- Keep eye size, nose size, and mouth proportions realistic (no oversized anime-style features).
+- Apply style mainly to environment/clothing; do NOT restyle facial structure.
+- If any style/background instruction conflicts with face fidelity, prioritize face fidelity.
+- Keep face semi-realistic with subtle stylization (not hyper-real, not overly cartoon).
+- Preserve strong likeness from selfie so the person is clearly recognizable.
+- Expression should be friendly and positive with a natural smile.
 `;
 
 const OUTFIT_LOCK_INSTRUCTIONS = `
@@ -27,22 +55,36 @@ const OUTFIT_LOCK_INSTRUCTIONS = `
 - Keep clothing neat, premium, and entrepreneur-like.
 `;
 
+const REALISM_LOCK_INSTRUCTIONS = `
+[REALISM LOCK]
+- Final render should be semi-realistic with soft stylization for the person.
+- Avoid typical AI artifacts: over-sharpened edges, unnatural skin blur, distorted fingers, asymmetrical eyes, and fake glossy skin.
+- Keep natural body proportions from selfie (do not widen face/body, do not make subject look heavier).
+- Keep natural color tones, realistic shadows, and camera-like depth.
+- Avoid dreamy/fantasy color wash, heavy bloom, pastel haze, or over-saturated cinematic tint.
+- Negative constraints for face: no heavy anime face, no doll-like face, no plastic skin, no face simplification.
+`;
+
 const ARTWORK_LOCK_INSTRUCTIONS = `
 [ARTWORK BACKGROUND LOCK]
 - Use the kid's artwork as the actual scene foundation/background.
-- Enhance details and polish, but preserve core layout, concept, and major elements from the drawing.
+- Enhance details and polish based on both business type and selected style, while preserving core layout, concept, and major elements from the drawing.
+- Improve artwork quality with cleaner shapes, richer textures, better lighting, deeper depth, clearer shop signage, and more professional visual finish.
 - Do not replace with an unrelated or generic background.
 `;
 
 // Helper to construct the prompt from template
 const buildPrompt = (request: CartoonRequest, template: string) => {
   let prompt = template || DEFAULT_PROMPT_TEMPLATE;
+  const safePersonName = request.personName || '';
+  const safeBusinessType = request.businessType || 'business';
+  const safeBusinessName = request.businessName || 'N/A';
   
   // Replace variables
-  prompt = prompt.replace(/{{personName}}/g, request.personName || '');
+  prompt = prompt.replace(/{{personName}}/g, safePersonName);
   prompt = prompt.replace(/{{gender}}/g, request.gender || '');
-  prompt = prompt.replace(/{{businessName}}/g, request.businessName || '');
-  prompt = prompt.replace(/{{businessType}}/g, request.businessType || '');
+  prompt = prompt.replace(/{{businessName}}/g, safeBusinessName);
+  prompt = prompt.replace(/{{businessType}}/g, safeBusinessType);
   prompt = prompt.replace(/{{style}}/g, request.style || '');
   
   return prompt;
@@ -97,6 +139,22 @@ const toImageBlob = async (image: ImageFile): Promise<Blob> => {
   return response.blob();
 };
 
+const toBlobFromGeneratedSource = async (src: string): Promise<Blob> => {
+  try {
+    const response = await fetch(src);
+    if (!response.ok) throw new Error(`Failed to fetch generated image: ${response.status}`);
+    return response.blob();
+  } catch {
+    if (/^https?:\/\//i.test(src)) {
+      const proxied = `${PROXY_URL}${encodeURIComponent(src)}`;
+      const response = await fetch(proxied);
+      if (!response.ok) throw new Error(`Failed to fetch generated image via proxy: ${response.status}`);
+      return response.blob();
+    }
+    throw new Error('Failed to load generated image for face refinement');
+  }
+};
+
 const parseOpenAIImage = (data: any): string => {
   const firstImage = data?.data?.[0];
   if (!firstImage) {
@@ -119,6 +177,60 @@ const PROXY_URL = "https://corsproxy.io/?";
 const fetchWithProxy = async (url: string, options: RequestInit, useProxy: boolean = false) => {
   const finalUrl = useProxy ? `${PROXY_URL}${url}` : url;
   return fetch(finalUrl, options);
+};
+
+const runOpenAIFaceRefinement = async ({
+  apiKey,
+  model,
+  size,
+  quality,
+  baseImageSrc,
+  selfieImage,
+}: {
+  apiKey: string;
+  model: string;
+  size: string;
+  quality?: string;
+  baseImageSrc: string;
+  selfieImage: ImageFile;
+}): Promise<string> => {
+  const formData = new FormData();
+  formData.append('model', model);
+  formData.append(
+    'prompt',
+    `Face correction pass:
+- Keep the generated scene, background, outfit, pose, framing, and colors unchanged.
+- Only correct the person's face to strongly match the selfie identity.
+- Preserve recognizable facial structure, eyes, nose, lips, skin tone, and expression.
+- Keep a soft cartoon style but avoid changing identity.
+- Keep natural body/face proportions from selfie (no fattening/widening).
+- Avoid dreamy color cast or hazy pastel grading.
+- Keep a natural friendly smile on the face.`
+  );
+  formData.append('size', size);
+  if (quality) {
+    formData.append('quality', quality);
+  }
+
+  formData.append('image[]', await toBlobFromGeneratedSource(baseImageSrc), 'base.png');
+  formData.append('image[]', await toImageBlob(selfieImage), 'selfie.jpg');
+
+  const refineResponse = await fetch('https://api.openai.com/v1/images/edits', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: formData,
+  });
+
+  if (!refineResponse.ok) {
+    const errorData = await refineResponse.json().catch(() => ({}));
+    const errorMsg = errorData.error?.message || refineResponse.statusText;
+    throw new Error(`OpenAI Face Refinement Error: ${errorMsg}`);
+  }
+
+  const refineData = await refineResponse.json();
+  return parseOpenAIImage(refineData);
 };
 
 export const generateCartoonImage = async (
@@ -156,7 +268,7 @@ const generateWithGemini = async (
   // Use custom template or fallback
   const promptTemplate = settings.promptTemplate || DEFAULT_PROMPT_TEMPLATE;
   let prompt = buildPrompt(request, promptTemplate);
-  prompt += `\n${FACE_LOCK_INSTRUCTIONS}\n${OUTFIT_LOCK_INSTRUCTIONS}\n${ARTWORK_LOCK_INSTRUCTIONS}`;
+  prompt += `\n${FACE_LOCK_INSTRUCTIONS}\n${OUTFIT_LOCK_INSTRUCTIONS}\n${REALISM_LOCK_INSTRUCTIONS}\n${ARTWORK_LOCK_INSTRUCTIONS}`;
 
   try {
     const parts: any[] = [
@@ -243,11 +355,12 @@ const generateWithOpenAI = async (
     prompt += "\n[REFERENCE IMAGE CONTEXT: The selfie image is provided and must drive facial identity.]";
   }
   prompt += `\n${OUTFIT_LOCK_INSTRUCTIONS}`;
+  prompt += `\n${REALISM_LOCK_INSTRUCTIONS}`;
 
   // Always enforce artwork-as-background when artwork image is provided.
   if (artworkImage) {
     prompt += `\n${ARTWORK_LOCK_INSTRUCTIONS}`;
-    prompt += "\n[ARTWORK REFERENCE CONTEXT: The kid's artwork image is provided as the background source.]";
+    prompt += "\n[ARTWORK REFERENCE CONTEXT: The kid's artwork image is provided as the background source. Enhance it according to business type and selected style.]";
   }
 
   const model = finalSettings.model || 'gpt-image-1';
@@ -323,7 +436,25 @@ const generateWithOpenAI = async (
     }
 
     const data = await response.json();
-    return parseOpenAIImage(data);
+    const firstPassImage = parseOpenAIImage(data);
+
+    // Second pass face-correction for stronger selfie likeness.
+    if (isGptImageModel(model) && referenceImage) {
+      try {
+        return await runOpenAIFaceRefinement({
+          apiKey,
+          model,
+          size,
+          quality,
+          baseImageSrc: firstPassImage,
+          selfieImage: referenceImage,
+        });
+      } catch (refineError) {
+        console.warn('Face refinement pass failed, falling back to first pass result:', refineError);
+      }
+    }
+
+    return firstPassImage;
   } catch (error) {
     console.error("OpenAI Image Generation Error:", error);
     throw error;

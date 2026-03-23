@@ -143,9 +143,13 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
   const [hasMore, setHasMore] = useState(true);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadPreview, setDownloadPreview] = useState<{ url: string; filename: string } | null>(null);
+  const [comparePreview, setComparePreview] = useState<{
+    personName: string;
+    beforeUrl: string | null;
+    afterUrl: string;
+  } | null>(null);
   const [imageLoadingIds, setImageLoadingIds] = useState<Record<string, boolean>>({});
   const [thumbnailFallbackIds, setThumbnailFallbackIds] = useState<Record<string, boolean>>({});
-  const [beforeAfterModeById, setBeforeAfterModeById] = useState<Record<string, 'before' | 'after'>>({});
   const [activePresentedId, setActivePresentedId] = useState<string | null>(null);
   const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presentRequestSeqRef = useRef(0);
@@ -153,36 +157,66 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
   // Optimized query to only fetch pending items for status updates
   const updatePendingGenerations = async () => {
     if (!supabase) return;
+    const pendingIds = generations
+      .filter((gen) => gen.status === 'pending')
+      .map((gen) => gen.id);
+    if (pendingIds.length === 0) return;
+
     try {
       const { data, error } = await supabase
         .from('generations')
-        .select('id,status,created_at')
-        .eq('status', 'pending')
-        .order('created_at', { ascending: false });
+        .select('id,status,created_at,image_url,before_image_url')
+        .in('id', pendingIds);
 
       if (error) throw error;
 
       const now = new Date().getTime();
-      const updates: Record<string, string> = {};
+      const serverRows = new Map(
+        (data || []).map((item: any) => [
+          item.id,
+          {
+            status: item.status as string,
+            created_at: item.created_at as string,
+            image_url: typeof item.image_url === 'string' ? item.image_url : '',
+            before_image_url: typeof item.before_image_url === 'string' ? item.before_image_url : '',
+          },
+        ])
+      );
 
-      // Check for timeouts and collect pending items data
-      (data || []).forEach(item => {
-        const genTime = new Date(item.created_at).getTime();
-        if (now - genTime > 2 * 60 * 1000) {
-          updates[item.id] = 'error';
-        }
-      });
+      const timedOutIds: string[] = [];
 
-      // Apply local updates to generations
-      setGenerations(prev => prev.map(gen => ({
-        ...gen,
-        status: updates[gen.id] || gen.status
-      })));
+      setGenerations((prev) =>
+        prev.map((gen) => {
+          if (gen.status !== 'pending') return gen;
 
-      // Update any timed-out items in database
-      if (Object.keys(updates).length > 0) {
-        const timedOut = Object.entries(updates).filter(([_, status]) => status === 'error');
-        for (const [id, _] of timedOut) {
+          const row = serverRows.get(gen.id);
+          if (!row) return gen;
+
+          if (row.status === 'success') {
+            return {
+              ...gen,
+              status: 'success',
+              image_url: row.image_url || gen.image_url,
+              before_image_url: row.before_image_url || gen.before_image_url,
+            };
+          }
+
+          if (row.status === 'error') {
+            return { ...gen, status: 'error' };
+          }
+
+          const genTime = new Date(row.created_at).getTime();
+          if (Number.isFinite(genTime) && now - genTime > 2 * 60 * 1000) {
+            timedOutIds.push(gen.id);
+            return { ...gen, status: 'error' };
+          }
+
+          return gen;
+        })
+      );
+
+      if (timedOutIds.length > 0) {
+        for (const id of timedOutIds) {
           supabase.from('generations').update({ status: 'error' }).eq('id', id).then();
         }
       }
@@ -259,7 +293,6 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
   };
 
   useEffect(() => {
-    setBeforeAfterModeById({});
     setThumbnailFallbackIds({});
     setLimit(12);
     const cacheKey = getGalleryCacheKey(selectedOutlet);
@@ -831,6 +864,17 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
     setDownloadPreview(null);
   };
 
+  const handleOpenBeforeAfter = (gen: Generation) => {
+    const beforeImageUrl =
+      gen.before_image_url ||
+      (gen.id === DEMO_GENERATION.id ? null : getBeforeImageForGeneration(gen.id));
+    setComparePreview({
+      personName: gen.person_name,
+      beforeUrl: beforeImageUrl,
+      afterUrl: gen.image_url,
+    });
+  };
+
   const formatElapsed = (totalSeconds: number): string => {
     const safeSeconds = Math.max(0, totalSeconds);
     const hours = Math.floor(safeSeconds / 3600);
@@ -930,50 +974,15 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
                 <div className="aspect-square bg-gray-100 relative group overflow-hidden">
                   {gen.status === 'success' ? (
                     gen.image_url ? (
-                      (() => {
-                        const beforeImageUrl =
-                          gen.before_image_url ||
-                          (gen.id === DEMO_GENERATION.id ? null : getBeforeImageForGeneration(gen.id));
-                        const hasBeforeImage = Boolean(beforeImageUrl);
-                        const isBefore = hasBeforeImage && beforeAfterModeById[gen.id] === 'before';
-                        const displayImageSrc = isBefore
-                          ? (beforeImageUrl as string)
-                          : (thumbnailFallbackIds[gen.id] ? gen.image_url : buildGalleryThumbnailUrl(gen.image_url));
-
-                        return (
                       <>
-                        <div className="absolute top-2 left-2 z-20 inline-flex bg-white/90 backdrop-blur-sm rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-                          <button
-                            onClick={() => setBeforeAfterModeById((prev) => ({ ...prev, [gen.id]: 'before' }))}
-                            disabled={!hasBeforeImage}
-                            className={`px-2.5 py-1.5 text-xs font-bold transition-colors ${
-                              isBefore
-                                ? 'bg-blue-600 text-white'
-                                : 'text-gray-600 hover:bg-gray-100'
-                            } disabled:opacity-40 disabled:cursor-not-allowed`}
-                          >
-                            Before
-                          </button>
-                          <button
-                            onClick={() => setBeforeAfterModeById((prev) => ({ ...prev, [gen.id]: 'after' }))}
-                            className={`px-2.5 py-1.5 text-xs font-bold transition-colors ${
-                              !isBefore
-                                ? 'bg-blue-600 text-white'
-                                : 'text-gray-600 hover:bg-gray-100'
-                            }`}
-                          >
-                            After
-                          </button>
-                        </div>
-                        <img 
-                          src={displayImageSrc}
-                          alt={gen.person_name} 
+                        <img
+                          src={thumbnailFallbackIds[gen.id] ? gen.image_url : buildGalleryThumbnailUrl(gen.image_url)}
+                          alt={gen.person_name}
                           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                           referrerPolicy="no-referrer"
                           loading="lazy"
                           decoding="async"
                           onError={() => {
-                            if (isBefore) return;
                             setThumbnailFallbackIds((prev) => {
                               if (prev[gen.id]) return prev;
                               return { ...prev, [gen.id]: true };
@@ -998,8 +1007,6 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
                           </button>
                         </div>
                       </>
-                        );
-                      })()
                     ) : (
                       <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 bg-gray-50 p-4 text-center">
                         <RefreshCw size={32} className={`mb-2 text-blue-400 ${imageLoadingIds[gen.id] ? 'animate-spin' : ''}`} />
@@ -1037,7 +1044,13 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
                     <p className="truncate"><span className="font-medium">Type:</span> {gen.business_type}</p>
                   </div>
                   {gen.status === 'success' && gen.image_url && (
-                    <div className="mt-4 grid grid-cols-2 gap-2">
+                    <div className="mt-4 grid grid-cols-3 gap-2">
+                      <button
+                        onClick={() => handleOpenBeforeAfter(gen)}
+                        className="inline-flex items-center justify-center px-3 py-2 rounded-lg border border-blue-200 text-blue-700 text-sm font-semibold hover:bg-blue-50 transition-colors"
+                      >
+                        Before/After
+                      </button>
                       <button
                         onClick={() => void handlePresent(gen)}
                         className={`inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-white text-sm font-semibold transition-colors ${
@@ -1086,6 +1099,62 @@ const GalleryDashboard: React.FC<GalleryDashboardProps> = ({ onBack, onRegenerat
           </div>
         )}
       </main>
+
+      {/* Before/After Compare Modal */}
+      {comparePreview && (
+        <div
+          className="fixed inset-0 z-[105] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setComparePreview(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-bold text-gray-900">
+                Before / After: {comparePreview.personName}
+              </h3>
+              <button
+                onClick={() => setComparePreview(null)}
+                className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-50"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="rounded-xl border border-gray-200 overflow-hidden bg-gray-50">
+                <div className="px-3 py-2 text-sm font-bold text-gray-700 border-b border-gray-200 bg-white">
+                  Before
+                </div>
+                {comparePreview.beforeUrl ? (
+                  <img
+                    src={comparePreview.beforeUrl}
+                    alt={`${comparePreview.personName} before`}
+                    className="w-full h-auto object-contain max-h-[60vh]"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <div className="h-64 flex items-center justify-center text-sm text-gray-500">
+                    No before image available
+                  </div>
+                )}
+              </div>
+              <div className="rounded-xl border border-gray-200 overflow-hidden bg-gray-50">
+                <div className="px-3 py-2 text-sm font-bold text-gray-700 border-b border-gray-200 bg-white">
+                  After
+                </div>
+                <img
+                  src={comparePreview.afterUrl}
+                  alt={`${comparePreview.personName} after`}
+                  className="w-full h-auto object-contain max-h-[60vh]"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Download Preview Modal */}
       {downloadPreview && (

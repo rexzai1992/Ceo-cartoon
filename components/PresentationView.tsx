@@ -1,49 +1,87 @@
 import React, { useEffect, useState } from 'react';
 import { Generation } from '../types';
 import { getBeforeImageForGeneration } from '../services/presentationStorage';
+import { supabase } from '../services/dbService';
+
+const hydratePresentationItem = async (rawItem: Generation): Promise<Generation> => {
+  const localBefore = rawItem?.id ? getBeforeImageForGeneration(rawItem.id) : null;
+  if (localBefore) {
+    return { ...rawItem, before_image_url: localBefore };
+  }
+
+  if (rawItem.before_image_url) {
+    return rawItem;
+  }
+
+  if (!supabase || !rawItem?.id) {
+    return rawItem;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('generations')
+      .select('before_image_url,image_url')
+      .eq('id', rawItem.id)
+      .single();
+
+    if (error) throw error;
+
+    return {
+      ...rawItem,
+      before_image_url: data?.before_image_url || rawItem.before_image_url,
+      image_url: data?.image_url || rawItem.image_url,
+    };
+  } catch {
+    return rawItem;
+  }
+};
 
 const PresentationView: React.FC = () => {
   const [presentationItem, setPresentationItem] = useState<Generation | null>(null);
   const [showGenerated, setShowGenerated] = useState(false);
 
   useEffect(() => {
+    let alive = true;
+
     // Check initial state
     const stored = localStorage.getItem('presentation_data');
     if (stored) {
-      try {
-        const storedItem = JSON.parse(stored);
-        const beforeImage = storedItem?.id ? getBeforeImageForGeneration(storedItem.id) : null;
-        const hydratedItem = beforeImage
-          ? { ...storedItem, before_image_url: beforeImage }
-          : storedItem;
-        setPresentationItem(hydratedItem);
-        // Start transition after a short delay
-        setTimeout(() => setShowGenerated(true), 1000);
-      } catch (e) {
-        console.error(e);
-      }
+      (async () => {
+        try {
+          const storedItem = JSON.parse(stored) as Generation;
+          const hydratedItem = await hydratePresentationItem(storedItem);
+          if (!alive) return;
+          setPresentationItem(hydratedItem);
+          // Show "before" image first, then switch to generated after 2 seconds.
+          setTimeout(() => {
+            if (alive) setShowGenerated(true);
+          }, 2000);
+        } catch (e) {
+          console.error(e);
+        }
+      })();
     }
 
     // Listen for changes from the controller (Gallery)
     const handleStorage = (e: StorageEvent) => {
       if (e.key === 'presentation_data') {
         if (e.newValue) {
-          try {
-            const newItem = JSON.parse(e.newValue);
-            const beforeImage = newItem?.id ? getBeforeImageForGeneration(newItem.id) : null;
-            const hydratedItem = beforeImage
-              ? { ...newItem, before_image_url: beforeImage }
-              : newItem;
-            setPresentationItem(hydratedItem);
-            setShowGenerated(false); // Reset to "before" state
-            
-            // Trigger the slow fade to generated photo
-            setTimeout(() => {
-              setShowGenerated(true);
-            }, 2000); // Wait 2 seconds before starting the fade
-          } catch (err) {
-            console.error(err);
-          }
+          (async () => {
+            try {
+              const newItem = JSON.parse(e.newValue) as Generation;
+              const hydratedItem = await hydratePresentationItem(newItem);
+              if (!alive) return;
+              setPresentationItem(hydratedItem);
+              setShowGenerated(false); // Reset to "before" state
+              
+              // Keep before image visible for 2 seconds, then fade to generated photo.
+              setTimeout(() => {
+                if (alive) setShowGenerated(true);
+              }, 2000);
+            } catch (err) {
+              console.error(err);
+            }
+          })();
         } else {
           setPresentationItem(null);
           setShowGenerated(false);
@@ -52,7 +90,10 @@ const PresentationView: React.FC = () => {
     };
 
     window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
+    return () => {
+      alive = false;
+      window.removeEventListener('storage', handleStorage);
+    };
   }, []);
 
   if (!presentationItem) {
@@ -75,9 +116,7 @@ const PresentationView: React.FC = () => {
     );
   }
 
-  const beforeImageSrc =
-    presentationItem.before_image_url ||
-    "https://images.unsplash.com/photo-1519689680058-324335c77eba?q=80&w=800&auto=format&fit=crop";
+  const beforeImageSrc = presentationItem.before_image_url || presentationItem.image_url;
 
   return (
     <div className="fixed inset-0 bg-gradient-to-br from-blue-900 via-[#4169E1] to-indigo-900 flex flex-col items-center justify-center overflow-hidden">
@@ -97,11 +136,11 @@ const PresentationView: React.FC = () => {
 
       {/* Bottom Right Logo */}
       <div className="absolute bottom-6 right-6 z-30 pointer-events-none">
-        <div className="h-10 md:h-16 flex items-center justify-center px-4 md:px-8 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl md:rounded-2xl shadow-2xl">
-          <span className="text-white font-black text-lg md:text-3xl tracking-widest uppercase drop-shadow-md">
-            Wonderpark
-          </span>
-        </div>
+        <img
+          src="/logos/wonderpark-logo.png"
+          alt="Wonderpark Logo"
+          className="h-10 md:h-16 object-contain drop-shadow-2xl"
+        />
       </div>
       
       <div className="relative w-full h-full flex flex-col items-center justify-center p-6 md:p-12 lg:p-16 z-20">
